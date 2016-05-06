@@ -3,6 +3,7 @@
 #include <NewPing.h>
 #include <SFE_BMP180.h>
 #include <Wire.h>
+#include <math.h>
 
 #define PIEZO 2
 #define LED 3
@@ -10,52 +11,76 @@
 #define SR04_TRIGGER 5
 #define SERVO 6
 
-// max distance in centimeters
-int maxDistance = 30;
-
-NewPing sonar(SR04_TRIGGER, SR04_ECHO, maxDistance);
-SFE_BMP180 altometer;
+#define MAX_DISTANCE 30 // in centimeters
+#define MAX_HEIGHT 3.00 // in feet
+#define OVERSAMPLING 3
+#define SAMPLING_RATE 10
 
 double baselinePressure;
-double initialAltitude = 0.0;
+
+NewPing sonar(SR04_TRIGGER, SR04_ECHO, MAX_DISTANCE);
+SFE_BMP180 barometer;
+Servo servo;
+
+bool heightReached = false;
 
 void setup() {
 	Serial.begin(9600);
 	pinMode(PIEZO, OUTPUT);
 	pinMode(LED, OUTPUT);
-	
-	if (altometer.begin()) {
-    	Serial.println("BMP180 init success");
-    	baselinePressure = getPressure();
-    	initialAltitude = altometer.altitude(getPressure(), baselinePressure);
-  	} else {
-    	Serial.println("BMP180 init fail (disconnected?)\n\n");
-   	}
-
+	barometer.begin();
+	servo.attach(SERVO);
+    baselinePressure = getPressure();
 }
 
 void loop() {
 	int distance = sonar.ping_cm();
-	double delta = altometer.altitude(getPressure(), baselinePressure);
-	Serial.println(delta*3.28084);
-	if (delta > 2.0) {
-		digitalWrite(LED, HIGH);
-	} else {
-		digitalWrite(LED, LOW);
+	double pressure = getPressure();
+	double altitude = 0.0;
+
+	// take a large number of readings and average them to improve accuracy
+	for (int i = 0; i < SAMPLING_RATE; i++) {
+		altitude += barometer.altitude(pressure, baselinePressure)*3.28084;
 	}
+	altitude /= SAMPLING_RATE;
+
+	Serial.println(altitude);
+
+	if (altitude >= MAX_HEIGHT) {
+		heightReached = true;
+	}
+
+	if (heightReached) {
+		digitalWrite(LED, HIGH);
+		sweep();
+	}
+
 }
 
 double getPressure() {
-	char status = altometer.startTemperature();
+	char status = barometer.startTemperature();
 	double temperature;
 	double pressure;
 
 	delay(status);
 
-	altometer.getTemperature(temperature);
-	status = altometer.startPressure(3);
+	barometer.getTemperature(temperature);
+	status = barometer.startPressure(OVERSAMPLING);
 	delay(status);
-	altometer.getPressure(pressure, temperature);
+	barometer.getPressure(pressure, temperature);
 
 	return(pressure);
+}
+
+void sweep() {
+	int pos = 0;
+	for (; pos <= 360; pos++) {
+		servo.write(pos);
+		delay(1);
+	}
+
+	for (; pos >= 0; pos--) {
+		servo.write(pos);
+		delay(1);
+	}
 }
